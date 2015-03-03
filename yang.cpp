@@ -26,15 +26,6 @@ using namespace std;
 const string logFileName = "yang.err";
 ofstream logFile;
 
-// struct ot store valid entry
-struct entryType {
-    networkCodeType networkCode;
-    sting stationCode;
-    typeOfBandType typeOfBand;
-    typeOfInstrumentType typeOfInstrument;
-    string orientation; // one to three characters, case insensitive
-};
-
 // case sensitive
 enum networkCodeType {
     CE,
@@ -42,21 +33,38 @@ enum networkCodeType {
     FA,
     NP,
     WR
-}
+};
+
+// case insensitive
+enum typeOfMagnitudeType {
+    ml,
+    ms,
+    mb,
+    mw
+};
 
 // case insensitive
 enum typeOfBandType {
-    long-period,  // L
-    short-period,  // B
+    longperiod,  // L
+    shortperiod,  // B
     broadband  // H
-}
+};
 
 // case insensitive
 enum typeOfInstrumentType {
-    high-gain,  // H
-    low-gain,  // L
+    highgain,  // H
+    lowgain,  // L
     accelerometer  // N
-}
+};
+
+// struct ot store valid entry
+struct entryType {
+    networkCodeType networkCode;
+    string stationCode;
+    typeOfBandType typeOfBand;
+    typeOfInstrumentType typeOfInstrument;
+    string orientation; // one to three characters, case insensitive
+};
 
 // function to open input file
 void openInput(ifstream &inputFile, string fileName);
@@ -79,14 +87,14 @@ void checkTime(string time, string &hour, string &minute, string &second, string
 // check the validity of time zone
 void checkTimeZone(string timeZone);
 
-// check the validity of magnitude type
-void checkMagnitudeType(string magnitudeType);
+// check the validity of magnitude type and convert it to enum
+bool magnitudeType_str2enum(string magnitudeType_str, typeOfMagnitudeType &magnitudeType_enum);
 
 // check the validity of magnitude
 void checkMagnitude(float magnitude);
 
 // read and processing one entry
-bool processOneEntry(ifstream &inputFile, entryType &entry, int entryNumber);
+bool processOneEntry(ifstream &inputFile, entryType &entry, int entryNumber, string networkCode);
 
 // convert a string to networkCodeType
 bool networkCode_str2enum(string network_str, networkCodeType &network_enum);
@@ -100,6 +108,18 @@ bool bandType_str2enum(string bandType_str, typeOfBandType &bandType_enum);
 // convert a string to typeOfInstrument
 bool instrumentType_str2enum(string instrumentType_str, typeOfInstrumentType &instrumentType_enum);
 
+// convert enum type of network to string
+string getNetworkCode(networkCodeType network_enum);
+
+// convert enum type of magnitude to string
+string getMagnitudeType(typeOfMagnitudeType magnitudeType_enum);
+
+// convert enum type of bandtype to string
+string getBandType(typeOfBandType bandType_enum);
+
+// convert enum type of instrument to string
+string getInstrumentType(typeOfInstrumentType instrumentType_enum);
+
 // check the validity of orientation
 bool checkOrientation(string str);
 
@@ -110,7 +130,7 @@ string string_to_month(string month);
 bool is_digits(string str);
 
 // change all the letters in a string to lower case
-void lowerString(string &str);
+string lowerString(string str);
 
 // function to print error message to both terminal and error file
 void errorMessage(const string &message);
@@ -135,8 +155,14 @@ int main() {
     inputFileName = "yang.in";
     openInput(inputFile, inputFileName);
 
+    errorMessage("Opening file: " + inputFileName + "\n");
+    errorMessage("Processing input...\n");
+
     headerProcessing(inputFile, outputFile, outputFileName);
+    errorMessage("Header read correctly!\n");
+
     tableProcessing(inputFile, outputFile);
+    errorMessage("Finished!\n");
 
     inputFile.close();
     outputFile.close();
@@ -186,7 +212,8 @@ void headerProcessing(ifstream &inputFile, ofstream &outputFile, string outputFi
     string month, day, year;
     string hour, minute, second, millisecond;
     double evlo, evla, evdp;  // event longitude, latitude and depth
-    string magnitudeType;
+    string magnitudeType_str;
+    typeOfMagnitudeType magnitudeType_enum;
     float magnitude;
 
     // first line is event ID
@@ -205,16 +232,19 @@ void headerProcessing(ifstream &inputFile, ofstream &outputFile, string outputFi
     getline(inputFile, earthquakeName);
 
     // forth line is events information
-    inputFile >> evlo >> evla >> evdp >> magnitudeType >> magnitude;
+    inputFile >> evlo >> evla >> evdp >> magnitudeType_str >> magnitude;
 
-    checkMagnitudeType(magnitudeType);
+    if (!magnitudeType_str2enum(magnitudeType_str, magnitudeType_enum)) {
+        errorMessageWithExit("Error: invalid magnitude type!\n");
+    }
+
     checkMagnitude(magnitude);
 
     // if all the infomation are correct, then write output header
     openOutput(outputFile, outputFileName);
 
     outputFile << "# " << day << " " << string_to_month(month) << " " << year << " ";
-    outputFile << time << " " << timeZone << " " << magnitudeType << " " << magnitude << " ";
+    outputFile << time << " " << timeZone << " " << getMagnitudeType(magnitudeType_enum) << " " << magnitude << " ";
     outputFile << earthquakeName << " [" << eventID << "] (" << evlo << ", " << evla << ", " << evdp << ")" << endl;
 
 }
@@ -224,25 +254,30 @@ void tableProcessing(ifstream &inputFile, ofstream &outputFile) {
 
     int numberOfValidEntries = 0;
     int numberOfEntryRead = 0;
+    int numberOfSignals = 0;
+    string networkCode;
+    bool isValidEntry = true;
     static const int maximumValidEntries = 300;
     entryType entry[maximumValidEntries];
 
     // read the file to the end of the file or reach maximum valid entry number
-    do {
+    while (inputFile >> networkCode && numberOfValidEntries < maximumValidEntries) {
         numberOfEntryRead++;
 
-        if (processOneEntry(inputFile, entry[numberOfValidEntries], numberOfEntryRead)) {
-            numberOfValidEntries++;
+        if (processOneEntry(inputFile, entry[numberOfValidEntries], numberOfEntryRead, networkCode)) {
+            numberOfSignals += entry[numberOfValidEntries].orientation.length();
+            numberOfValidEntries++;;
         }
+    }
 
-    } while (!inputFile.eof() && numberOfValidEntries < maximumValidEntries)
+    outputFile << numberOfSignals << endl;
     
     // print all the signals to output file
     for (int i = 0; i < numberOfValidEntries; i++) {
         for (int j = 0; j < entry[i].orientation.length(); j++) {
             stringstream singalStream;
             singalStream << getNetworkCode(entry[i].networkCode) << ".";
-            singalStream << getStationCode(entry[i].stationCode) << ".";
+            singalStream << entry[i].stationCode << ".";
             singalStream << getBandType(entry[i].typeOfBand);
             singalStream << getInstrumentType(entry[i].typeOfInstrument);
             singalStream << entry[i].orientation[j] << endl;
@@ -250,47 +285,50 @@ void tableProcessing(ifstream &inputFile, ofstream &outputFile) {
             outputFile << singalStream.str();
         }
     }
-    
+
+    errorMessage("Total invalid entries ignored: " + to_string(numberOfEntryRead - numberOfValidEntries) + "\n");
+    errorMessage("Totoal valid entries read: " + to_string(numberOfValidEntries) + "\n");
+    errorMessage("Total singal names produced: " + to_string(numberOfSignals) + "\n");
+
 }
 
 // read and processing one entry
-bool processOneEntry(ifstream &inputFile, entryType &entry, int entryNumber) {
+bool processOneEntry(ifstream &inputFile, entryType &entry, int entryNumber, string networkCode) {
 
     string tmpStr;  // read as string and them convert it to enum type
     bool isValidEntry = true;
 
-    // read network and them convert it to enum type
-    inputFile >> tmpStr;
-    if (!networkCode_str2enum(tmpStr, entry.networkCode)) {
-        errorMessage("Entry # " + to_string(entryNumber) + " ignored. Invalid network");
+    // convert networkCode to enum type
+    if (!networkCode_str2enum(networkCode, entry.networkCode)) {
+        errorMessage("Entry # " + to_string(entryNumber) + " ignored. Invalid network.\n");
         isValidEntry = false;
     }
 
     // read station code
     inputFile >> entry.stationCode;
     if (!checkStationCode(entry.stationCode)) {
-        errorMessage("Entry # " + to_string(entryNumber) + " ignored. Invalid station code");
+        errorMessage("Entry # " + to_string(entryNumber) + " ignored. Invalid station code.\n");
         isValidEntry = false;
     }
 
     // read type of instrument and convert it to enum type
     inputFile >> tmpStr;
     if (!bandType_str2enum(tmpStr, entry.typeOfBand)) {
-        errorMessage("Entry # " + to_string(entryNumber) + " ignored. Invalid band type");
+        errorMessage("Entry # " + to_string(entryNumber) + " ignored. Invalid band type.\n");
         isValidEntry = false;
     }
 
     // read type of band and convert it to enum type
     inputFile >> tmpStr;
     if (!instrumentType_str2enum(tmpStr, entry.typeOfInstrument)) {
-        errorMessage("Entry # " + to_string(entryNumber) + " ignored. Invalid instrument type");
+        errorMessage("Entry # " + to_string(entryNumber) + " ignored. Invalid instrument type.\n");
         isValidEntry = false;
     }
 
     // read orientation
     inputFile >> entry.orientation;
     if (!checkOrientation(entry.orientation)) {
-        errorMessage("Entry # " + to_string(entryNumber) + " ignored. Invalid orientation");
+        errorMessage("Entry # " + to_string(entryNumber) + " ignored. Invalid orientation.\n");
         isValidEntry = false;
     }
 
@@ -346,6 +384,7 @@ void checkTime(string time, string &hour, string &minute, string &second, string
     } else {
         errorMessageWithExit("Error: invalid time of this earthquake!\n");
     }
+
 }
 
 // check the validity of time zone
@@ -355,24 +394,36 @@ void checkTimeZone(string timeZone) {
     if (timeZone.length() != 3) {
         errorMessageWithExit("Error: invalid time zone of this earthquake!\n");
     }
+
 }
 
 // check the validity of magnitude type
-void checkMagnitudeType(string magnitudeType) {
+bool magnitudeType_str2enum(string magnitudeType_str, typeOfMagnitudeType &magnitudeType_enum) {
 
-    // the length of magnitudeType must be 2
-    if (magnitudeType.length() == 2) {
-        // magnitude type must be one of ML, Ms, Mb or Mw, which is case insensitive
-        // get the lowercase of first and second letter of magnitude type
-        char l1 = tolower(magnitudeType[0]);
-        char l2 = tolower(magnitudeType[1]);
+    // case insensitive so convert it to lower case first
+    magnitudeType_str = lowerString(magnitudeType_str);
 
-        if (l1 != 'm' || (l2 !='l' && l2 !='s' && l2 !='b' && l2 !='w')) {
-            errorMessageWithExit("Error: invalid magnitude type of this earthquake!\n");
-        }
-    } else {
-        errorMessageWithExit("Error: invalid magnitude type of this earthquake!\n");
+    if (magnitudeType_str == "ml") {
+        magnitudeType_enum = ml;
+        return true;
     }
+
+    if (magnitudeType_str == "ms") {
+        magnitudeType_enum = ms;
+        return true;
+    }
+
+    if (magnitudeType_str == "mb") {
+        magnitudeType_enum = mb;
+        return true;
+    }
+
+    if (magnitudeType_str == "mw") {
+        magnitudeType_enum = mw;
+        return true;
+    }
+
+    return false;
 
 }
 
@@ -423,12 +474,12 @@ bool networkCode_str2enum(string network_str, networkCodeType &network_enum) {
 bool checkStationCode(string str) {
 
     // station code must be 3 captital letters or 5 numeric characters
-    if (str.length() == 5 && is_digits(stationCode_str)) {
+    if (str.length() == 5 && is_digits(str)) {
         return true;
     }
 
     if (str.length() == 3) {
-        if (isupper(ststr(0)) && isupper(ststr(1)) && isupper(ststr(2))) {
+        if (isupper(str[0]) && isupper(str[1]) && isupper(str[2])) {
             return true;
         }
     }
@@ -443,12 +494,12 @@ bool bandType_str2enum(string bandType_str, typeOfBandType &bandType_enum) {
     bandType_str = lowerString(bandType_str);
 
     if (bandType_str == "long-period") {
-        bandType_enum = long-period;
+        bandType_enum = longperiod;
         return true;
     }
 
     if (bandType_str == "short-period") {
-        bandType_enum = short-period;
+        bandType_enum = shortperiod;
         return true;
     }
 
@@ -467,12 +518,12 @@ bool instrumentType_str2enum(string instrumentType_str, typeOfInstrumentType &in
     instrumentType_str = lowerString(instrumentType_str);
 
     if (instrumentType_str == "high-gain") {
-        instrumentType_enum = high-gain;
+        instrumentType_enum = highgain;
         return true;
     }
 
     if (instrumentType_str == "low-gain") {
-        instrumentType_enum = low-gain;
+        instrumentType_enum = lowgain;
         return true;
     }
 
@@ -492,26 +543,103 @@ bool checkOrientation(string str) {
     str = lowerString(str);
 
     if (str.length() < 4) {
-        if (isdigit(str(0))) {
-            for (int i = 1; i < str.length(); i++) {
-                if (!isdigit(str(i))) {
+        if (isdigit(str[0])) {
+            for (int i = 0; i < str.length(); i++) {
+                if (!isdigit(str[i])) {
                     return false;
-                } else {
-                    return true;
                 }
             }
-        } else if (islower(str(0))) {
-            for (int i = 1; i < str.length(); i++) {
-                if (str(i) != 'n' && str(i) != 'e' && str(i) != 'z') {
+
+            return true;
+        } else if (islower(str[0])) {
+            for (int i = 0; i < str.length(); i++) {
+                if (str[i] != 'n' && str[i] != 'e' && str[i] != 'z') {
                     return false;
-                } else {
-                    return true;
                 }
             }
+
+            return true;
         }
     }
 
     return false;
+
+}
+
+// convert enum type of network to string
+string getNetworkCode(networkCodeType network_enum) {
+
+    switch (network_enum) {
+        case CE:
+            return "CE";
+            break;
+        case CI:
+            return "CI";
+            break;
+        case FA:
+            return "FA";
+            break;
+        case NP:
+            return "NP";
+            break;
+        case WR:
+            return "WR";
+            break;
+    }
+
+}
+
+// convert enum type of magnitude to string
+string getMagnitudeType(typeOfMagnitudeType magnitudeType_enum) {
+
+    switch (magnitudeType_enum) {
+        case ml:
+            return "ML";
+            break;
+        case ms:
+            return "Ms";
+            break;
+        case mb:
+            return "Mb";
+            break;
+        case mw:
+            return "Mw";
+            break;
+    }
+
+}
+
+// convert enum type of bandtype to string
+string getBandType(typeOfBandType bandType_enum) {
+
+    switch (bandType_enum) {
+        case longperiod:
+            return "L";
+            break;
+        case shortperiod:
+            return "B";
+            break;
+        case broadband:
+            return "H";
+            break;
+    }
+
+}
+
+// convert enum type of instrument to string
+string getInstrumentType(typeOfInstrumentType instrumentType_enum) {
+
+    switch (instrumentType_enum) {
+        case highgain:
+            return "H";
+            break;
+        case lowgain:
+            return "L";
+            break;
+        case accelerometer:
+            return "N";
+            break;
+    }
 
 }
 
@@ -551,11 +679,13 @@ bool is_digits(string str) {
 }
 
 // change all the letters in a string to lower case
-void lowerString(string &str) {
+string lowerString(string str) {
 
     for (int i = 0; i < str.length(); i++) {
         str[i] = tolower(str[i]);
     }
+
+    return str;
 
 }
 
